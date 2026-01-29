@@ -1,0 +1,62 @@
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables - DO NOT COMMIT!
+.env
+.env.local
+.env.*.local
+*.swo
+*~
+
+# Environment variables
+.env
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Output files
+out/
+output/
+*.txt
+*.srt
+*.vtt
+*.json
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+transcribe_*/
+
+# Media files (samples)
+samples/*.mp4
+samples/*.mp3
+samples/*.wav
+samples/*.m4a
+samples/*.mov
+samples/*.mkv
+samples/*.avi
+
+# Checkpoints
+.checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db

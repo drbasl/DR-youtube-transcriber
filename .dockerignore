@@ -1,0 +1,43 @@
+# البيئات الافتراضية
+.venv
+venv
+env
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Git
+.git
+.gitignore
+
+# Build outputs
+dist
+build
+*.egg-info
+
+# مخرجات التطبيق
+out
+tmp
+
+# Environment files
+.env
+.env.*
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
