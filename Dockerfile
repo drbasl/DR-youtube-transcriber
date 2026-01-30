@@ -15,13 +15,16 @@ COPY . /app
 
 # تحديث pip وتثبيت المكتبات
 RUN pip install --upgrade pip && \
-    pip install -e . && \
-    pip install streamlit yt-dlp
+    pip install streamlit yt-dlp openai typer httpx python-dotenv pydantic pydantic-settings rich
 
 # تعريف المنفذ (Render سيحدده تلقائياً)
 ENV PORT=8501
 
+# ضمان العثور على الحزمة بدون editable install
+ENV PYTHONPATH=/app/src
+
+# اجعل مجلد العمل في مكان app.py
+WORKDIR /app/src/transcribe_cli
+
 # تشغيل Streamlit
-CMD streamlit run src/transcribe_cli/app.py \
-    --server.address=0.0.0.0 \
-    --server.port=${PORT}
+CMD ["sh","-c","streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true"]
