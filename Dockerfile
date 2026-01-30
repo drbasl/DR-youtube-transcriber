@@ -27,4 +27,4 @@ ENV PYTHONPATH=/app/src
 WORKDIR /app
 
 # تشغيل Streamlit
-CMD ["sh","-c","streamlit run src/transcribe_cli/app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true"]
+CMD ["sh","-c","streamlit run /app/src/transcribe_cli/app.py --server.address=0.0.0.0 --server.port=${PORT:-8501} --server.headless=true"]
