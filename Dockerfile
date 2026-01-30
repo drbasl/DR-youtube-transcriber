@@ -23,8 +23,8 @@ ENV PORT=8501
 # ضمان العثور على الحزمة بدون editable install
 ENV PYTHONPATH=/app/src
 
-# اجعل مجلد العمل في مكان app.py
-WORKDIR /app/src/transcribe_cli
+# اجعل مجلد العمل في جذر التطبيق
+WORKDIR /app
 
 # تشغيل Streamlit
-CMD ["sh","-c","streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true"]
+CMD ["sh","-c","streamlit run src/transcribe_cli/app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true"]
