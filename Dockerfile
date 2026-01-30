@@ -23,12 +23,15 @@ ENV PORT=8501
 # ضمان العثور على الحزمة بدون editable install
 ENV PYTHONPATH=/app/src
 
-# تشغيل Streamlit (اكتشاف تلقائي لمسار app.py)
+# تشغيل Streamlit (debug + auto-detect)
 CMD ["sh","-c", "\
 set -e; \
-echo 'Locating Streamlit entry...'; \
-TARGET=$(find /app -maxdepth 6 -type f -name app.py | head -n 1); \
+echo '=== PWD ==='; pwd; \
+echo '=== LS /app ==='; ls -la /app; \
+echo '=== FIND app.py ==='; find /app -maxdepth 8 -type f -name app.py -print; \
+TARGET=$(find /app -maxdepth 8 -type f -name app.py | head -n 1); \
 echo \"Found: $TARGET\"; \
 test -n \"$TARGET\"; \
+test -f \"$TARGET\"; \
 streamlit run \"$TARGET\" --server.address=0.0.0.0 --server.port=${PORT:-8501} --server.headless=true \
 "]
