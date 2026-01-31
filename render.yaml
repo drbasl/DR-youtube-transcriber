@@ -1,0 +1,5 @@
+services:
+  - type: web
+    name: DR-youtube-transcriber
+    env: docker
+    dockerfilePath: ./Dockerfile
