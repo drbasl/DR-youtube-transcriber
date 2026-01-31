@@ -1,0 +1,3 @@
+[console_scripts]
+transcribe = transcribe_cli.cli:app
+transcribe-ui = transcribe_cli.app:run
