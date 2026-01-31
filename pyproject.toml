@@ -21,10 +21,13 @@ dependencies = [
     "rich>=13.0.0",
     "streamlit>=1.30.0",
     "yt-dlp>=2024.10.7",
+    "openai>=1.0.0",
     "python-docx>=1.0.0",
     "reportlab>=4.0.0",
     "arabic-reshaper>=3.0.0",
     "python-bidi>=0.4.0",
+    "streamlit-quill>=0.0.2",
+    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]

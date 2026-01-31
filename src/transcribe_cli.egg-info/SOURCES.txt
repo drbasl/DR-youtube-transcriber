@@ -13,10 +13,12 @@ src/transcribe_cli.egg-info/top_level.txt
 src/transcribe_cli/adapters/__init__.py
 src/transcribe_cli/adapters/openai_client.py
 src/transcribe_cli/core/__init__.py
+src/transcribe_cli/core/ai_features.py
 src/transcribe_cli/core/chunking.py
 src/transcribe_cli/core/pipeline.py
 src/transcribe_cli/core/postprocess.py
 src/transcribe_cli/utils/__init__.py
+src/transcribe_cli/utils/exporters.py
 src/transcribe_cli/utils/ffmpeg.py
 src/transcribe_cli/utils/fs.py
 src/transcribe_cli/utils/logging.py
