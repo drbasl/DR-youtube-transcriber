@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: transcribe-cli
-    env: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
-    startCommand: streamlit run src/transcribe_cli/app.py --server.port $PORT --server.address 0.0.0.0
