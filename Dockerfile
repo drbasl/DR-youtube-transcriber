@@ -10,10 +10,9 @@ RUN apt-get update && \
 # إنشاء مجلد العمل
 WORKDIR /app
 
-# نسخ الملفات المطلوبة للتشغيل (بناءً على repo root)
-COPY transcribe-cli/pyproject.toml /app/pyproject.toml
-COPY transcribe-cli/README.md /app/README.md
-COPY transcribe-cli/src /app/src
+# نسخ الملفات المطلوبة للتشغيل (من جذر المشروع)
+COPY pyproject.toml /app/
+COPY src/ /app/src/
 
 # تحديث pip وتثبيت الحزمة
 RUN pip install --upgrade pip && \
@@ -29,4 +28,4 @@ ENV PYTHONPATH=/app/src
 RUN test -f /app/src/transcribe_cli/app.py
 
 # تشغيل Streamlit
-CMD ["sh","-c", "streamlit run /app/src/transcribe_cli/app.py --server.address=0.0.0.0 --server.port=${PORT:-8501} --server.headless=true"]
+CMD ["sh","-c", "streamlit run src/transcribe_cli/app.py --server.port ${PORT:-8501} --server.address 0.0.0.0"]
