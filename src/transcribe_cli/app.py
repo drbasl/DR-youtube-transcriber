@@ -7,6 +7,7 @@ import logging
 import traceback
 import shutil
 import tempfile
+import json
 from pathlib import Path
 from typing import Optional
 import streamlit as st
@@ -16,6 +17,8 @@ from transcribe_cli.config import load_settings, TranscribeConfig
 from transcribe_cli.core.pipeline import transcribe_file
 from transcribe_cli.core.postprocess import normalize_whitespace, format_arabic_text
 from transcribe_cli.utils.youtube import download_captions_text, download_audio, strip_captions_timestamps, strip_captions_timestamps_keep_lines
+from transcribe_cli.core.ai_features import generate_summary, extract_key_points, convert_to_speech, rewrite_text
+from transcribe_cli.utils.exporters import export_to_docx, export_to_pdf
 
 # Configure logging
 logging.basicConfig(
@@ -31,33 +34,22 @@ def extract_segments(resp):
     if resp is None:
         return []
     if isinstance(resp, dict):
-        # Check direct segments key
-        if "segments" in resp:
-            return resp["segments"]
-        # Check nested data.segments
-        if "data" in resp and isinstance(resp["data"], dict) and "segments" in resp["data"]:
-            return resp["data"]["segments"]
+        if "segments" in resp: return resp["segments"]
+        if "data" in resp and isinstance(resp["data"], dict) and "segments" in resp["data"]: return resp["data"]["segments"]
         return []
-    # Try as object attribute
-    segments = getattr(resp, "segments", [])
-    return segments or []
+    return getattr(resp, "segments", []) or []
 
 
 def extract_text(resp):
     """Safely extract text from response"""
-    if resp is None:
-        return ""
-    if isinstance(resp, dict):
-        return resp.get("transcript", resp.get("text", ""))
+    if resp is None: return ""
+    if isinstance(resp, dict): return resp.get("transcript", resp.get("text", ""))
     return getattr(resp, "transcript", getattr(resp, "text", ""))
 
 
 def extract_metadata(resp, key, default=None):
-    """Safely extract metadata from response"""
-    if resp is None:
-        return default
-    if isinstance(resp, dict):
-        return resp.get(key, default)
+    if resp is None: return default
+    if isinstance(resp, dict): return resp.get(key, default)
     return getattr(resp, key, default)
 
 
@@ -74,12 +66,7 @@ LANGUAGES = {
     "Español": "es",
     "Français": "fr",
     "Deutsch": "de",
-    "Italiano": "it",
-    "Português": "pt",
-    "Русский": "ru",
-    "日本語": "ja",
-    "中文": "zh",
-    "한국어": "ko",
+    # Add more as needed
 }
 
 # Output formats
@@ -100,79 +87,64 @@ def configure_page():
         initial_sidebar_state="expanded"
     )
     
-    # Custom CSS
+    # Custom CSS for Mobile Responsiveness and UI Polish
     st.markdown("""
         <style>
+        /* Base Styles */
+        body { overflow-x: hidden; }
         .main-header {
             text-align: center;
-            padding: 0.75rem 0;
+            padding: 1rem 0;
+            background: linear-gradient(90deg, #FF4B4B 0%, #111827 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800;
         }
         .app-container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 0 0.5rem;
         }
+        
+        /* Cards */
         .card {
             background: #111827;
-            border: 1px solid #1f2937;
-            border-radius: 14px;
-            padding: 1rem;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+            border: 1px solid #374151;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transition: transform 0.2s;
         }
-        .toolbar {
-            display: block;
-            margin-top: 0.5rem;
-        }
-        .result-card textarea {
-            height: 420px !important;
-            overflow-y: auto !important;
+        
+        /* Result Area */
+        .stTextArea textarea {
+            background-color: #1F2937 !important;
+            color: #F9FAFB !important;
+            border: 1px solid #374151 !important;
+            border-radius: 8px;
+            font-size: 1.1rem;
             line-height: 1.8;
+            height: 450px !important;
         }
-        .success-box {
-            padding: 1rem;
-            border-radius: 0.5rem;
-            background-color: #d4edda;
-            border: 1px solid #c3e6cb;
-            color: #155724;
-            margin: 1rem 0;
-        }
-        .error-box {
-            padding: 1rem;
-            border-radius: 0.5rem;
-            background-color: #f8d7da;
-            border: 1px solid #f5c6cb;
-            color: #721c24;
-            margin: 1rem 0;
-        }
-        .info-box {
-            padding: 1rem;
-            border-radius: 0.5rem;
-            background-color: #d1ecf1;
-            border: 1px solid #bee5eb;
-            color: #0c5460;
-            margin: 1rem 0;
-        }
+
+        /* Responsive Design */
         @media (max-width: 768px) {
-            .main-header {
-                font-size: 1.4rem;
-            }
-            .block-container {
-                padding-left: 0.75rem !important;
-                padding-right: 0.75rem !important;
-            }
-            .result-card textarea {
-                height: 280px !important;
-            }
-            .toolbar [data-testid="stButton"] button,
-            .toolbar [data-testid="stDownloadButton"] button {
-                width: 100% !important;
-            }
-            [data-testid="column"] {
-                width: 100% !important;
-                flex: 1 1 100% !important;
-            }
+            .main-header { font-size: 1.8rem; }
+            .card { padding: 1rem; }
+            .stTextArea textarea { height: 300px !important; font-size: 1rem; }
+            
+            /* Stack columns on mobile */
+            [data-testid="column"] { width: 100% !important; display: block !important; }
+            
+            /* Buttons full width */
+            .stButton button { width: 100% !important; }
+            div[data-testid="stHorizontalBlock"] { flex-direction: column; gap: 0.5rem; }
         }
-        body { overflow-x: hidden; }
+
+        /* Success/Error/Info Boxes */
+        .success-box { background-color: #064E3B; color: #D1FAE5; padding: 1rem; border-radius: 8px; }
+        .error-box { background-color: #7F1D1D; color: #FEE2E2; padding: 1rem; border-radius: 8px; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -183,14 +155,6 @@ def validate_settings() -> bool:
         settings = load_settings()
         if not settings.openai_api_key or settings.openai_api_key == "your-api-key-here":
             st.error("⚠️ **خطأ:** لم يتم تعيين مفتاح OpenAI API")
-            st.info("""
-                **لتشغيل التطبيق:**
-                1. افتح ملف `.env` في مجلد المشروع
-                2. أضف مفتاح API الخاص بك: `OPENAI_API_KEY=sk-...`
-                3. احفظ الملف وأعد تشغيل التطبيق
-                
-                **للحصول على مفتاح API:** https://platform.openai.com/api-keys
-            """)
             return False
         return True
     except Exception as e:
@@ -207,167 +171,93 @@ def process_file(
     postprocess_enabled: bool,
     postprocess_mode: str
 ) -> tuple[Optional[dict], Optional[str]]:
-    """
-    Process uploaded file and return transcription result
-    Returns: (result_text, error_message)
-    """
+    """Process uploaded file"""
     try:
-        # Save uploaded file to temp directory
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
             tmp_file.write(uploaded_file.read())
             tmp_path = Path(tmp_file.name)
         
         try:
-            # Create temp output directory
             output_dir = Path(tempfile.mkdtemp())
-            
-            # Create config
             settings = load_settings()
             config = TranscribeConfig(
                 input_path=tmp_path,
                 output_dir=output_dir,
                 language=language if language else "ar",
                 model=settings.openai_model,
-                output_format=output_format,  # Pass format to enable verbose_json for SRT/VTT
+                output_format=output_format,
                 diarize=enable_diarization,
-                max_bytes_per_chunk=max_chunk_size_mb * 1024 * 1024  # Convert MB to bytes
+                max_bytes_per_chunk=max_chunk_size_mb * 1024 * 1024
             )
             
-            # Run transcription
             result = asyncio.run(transcribe_file(config))
-            
-            # Ensure chunking succeeded
             chunks_count = extract_metadata(result, "chunks_count", extract_metadata(result, "chunks"))
-            if chunks_count is None:
-                raise ValueError("chunking failed; check ffmpeg extraction")
+            if chunks_count is None: raise ValueError("chunking failed")
 
-            # Extract segments safely
-            segments = extract_segments(result)
-            if segments is None:
-                if output_format in ["srt", "vtt"]:
-                    return None, "❌ لا توجد timestamps/segments. استخدم صيغة 'نص' أو 'JSON' بدلاً من SRT/VTT."
-                segments = []
+            segments = extract_segments(result) or []
+            if output_format in ["srt", "vtt"] and not segments: segments = []
+                
             raw_text = extract_text(result)
-
-            # Apply optional post-processing
-            if postprocess_enabled and postprocess_mode == "formatted":
-                processed_text = format_arabic_text(raw_text, language=language or "ar")
-            else:
-                processed_text = raw_text
+            processed_text = format_arabic_text(raw_text, language=language or "ar") if postprocess_enabled and postprocess_mode == "formatted" else raw_text
             
-            # Format output based on selected format
-            if output_format == "text":
-                output = processed_text
-                
-            elif output_format == "json":
-                import json
-                output = json.dumps({
-                    "language": extract_metadata(result, "language"),
-                    "duration": extract_metadata(result, "duration"),
-                    "text": processed_text,
-                    "segments": segments
-                }, ensure_ascii=False, indent=2)
-                
-            elif output_format == "srt":
-                if not segments:
-                    return None, "❌ لا توجد timestamps/segments. استخدم صيغة 'نص' أو 'JSON' بدلاً من SRT. للحصول على timestamps، تأكد من استخدام response_format=verbose_json في API."
-                # Generate SRT format
-                output_lines = []
-                seg_count = 0
-                for seg in segments:
-                    # Handle both dict and object
-                    if isinstance(seg, dict):
-                        text = seg.get("text", "")
-                        start = seg.get("start")
-                        end = seg.get("end")
-                        speaker = seg.get("speaker")
-                    else:
-                        text = getattr(seg, "text", "")
-                        start = getattr(seg, "start", None)
-                        end = getattr(seg, "end", None)
-                        speaker = getattr(seg, "speaker", None)
-                    
-                    if start is None or end is None:
-                        continue
-                    seg_count += 1
-                    # Convert to SRT time format
-                    start_time = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d},{int((start % 1) * 1000):03d}"
-                    end_time = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d},{int((end % 1) * 1000):03d}"
-                    speaker_prefix = f"[{speaker}] " if speaker else ""
-                    output_lines.extend([
-                        str(seg_count),
-                        f"{start_time} --> {end_time}",
-                        f"{speaker_prefix}{text}",
-                        ""
-                    ])
-                output = "\n".join(output_lines) if output_lines else processed_text
-                
-            elif output_format == "vtt":
-                if not segments:
-                    return None, "❌ لا توجد timestamps/segments. استخدم صيغة 'نص' أو 'JSON' بدلاً من VTT. للحصول على timestamps، تأكد من استخدام response_format=verbose_json في API."
-                # Generate WebVTT format
-                output_lines = ["WEBVTT", ""]
-                for seg in segments:
-                    # Handle both dict and object
-                    if isinstance(seg, dict):
-                        text = seg.get("text", "")
-                        start = seg.get("start")
-                        end = seg.get("end")
-                        speaker = seg.get("speaker")
-                    else:
-                        text = getattr(seg, "text", "")
-                        start = getattr(seg, "start", None)
-                        end = getattr(seg, "end", None)
-                        speaker = getattr(seg, "speaker", None)
-                    
-                    if start is None or end is None:
-                        continue
-                    # Convert to WebVTT time format
-                    start_time = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d}.{int((start % 1) * 1000):03d}"
-                    end_time = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d}.{int((end % 1) * 1000):03d}"
-                    speaker_prefix = f"[{speaker}] " if speaker else ""
-                    output_lines.extend([
-                        f"{start_time} --> {end_time}",
-                        f"{speaker_prefix}{text}",
-                        ""
-                    ])
-                output = "\n".join(output_lines) if len(output_lines) > 2 else processed_text
-                
-            else:
-                output = processed_text
-
-            # Prepare download JSON (text + metadata)
+            display_text = format_output(processed_text, segments, output_format)
+            
             import json
             download_json = json.dumps({
                 "text": processed_text,
                 "model": extract_metadata(result, "model"),
                 "lang": extract_metadata(result, "language"),
-                "duration_seconds": extract_metadata(result, "duration_seconds", extract_metadata(result, "duration")),
-                "chunks_count": extract_metadata(result, "chunks_count", extract_metadata(result, "chunks", 0))
+                "segments": segments
             }, ensure_ascii=False, indent=2)
 
             return {
-                "display_text": output,
+                "display_text": display_text,
                 "text": processed_text,
-                "text_download": processed_text,
+                "segments": segments,
                 "json_download": download_json,
                 "output_format": output_format
             }, None
             
         finally:
-            # Clean up temp files
-            if tmp_path.exists():
-                tmp_path.unlink()
-            if output_dir.exists():
-                shutil.rmtree(output_dir, ignore_errors=True)
+            if tmp_path.exists(): tmp_path.unlink()
+            if output_dir.exists(): shutil.rmtree(output_dir, ignore_errors=True)
                 
-    except ValueError as e:
-        return None, f"خطأ في التحقق: {str(e)}"
     except Exception as e:
         return None, f"خطأ في المعالجة: {str(e)}"
 
 
-def process_youtube(
+def format_output(text, segments, fmt):
+    if fmt == "text": return text
+    if fmt == "json":
+        import json
+        return json.dumps({"text": text, "segments": segments}, ensure_ascii=False, indent=2)
+    
+    if not segments: return text  # Fallback
+    
+    lines = []
+    if fmt == "srt":
+        for i, seg in enumerate(segments, 1):
+            s, e, t = seg.get("start"), seg.get("end"), seg.get("text", "")
+            if s is None or e is None: continue
+            st_str = f"{int(s//3600):02d}:{int((s%3600)//60):02d}:{int(s%60):02d},{int((s%1)*1000):03d}"
+            et_str = f"{int(e//3600):02d}:{int((e%3600)//60):02d}:{int(e%60):02d},{int((e%1)*1000):03d}"
+            lines.extend([str(i), f"{st_str} --> {et_str}", t, ""])
+        return "\n".join(lines)
+    
+    elif fmt == "vtt":
+        lines = ["WEBVTT", ""]
+        for seg in segments:
+            s, e, t = seg.get("start"), seg.get("end"), seg.get("text", "")
+            if s is None or e is None: continue
+            st_str = f"{int(s//3600):02d}:{int((s%3600)//60):02d}:{int(s%60):02d}.{int((s%1)*1000):03d}"
+            et_str = f"{int(e//3600):02d}:{int((e%3600)//60):02d}:{int(e%60):02d}.{int((e%1)*1000):03d}"
+            lines.extend([f"{st_str} --> {et_str}", t, ""])
+        return "\n".join(lines)
+        
+    return text
+
+
+def process_url(
     url: str,
     language: Optional[str],
     output_format: str,
@@ -378,568 +268,258 @@ def process_youtube(
     raw_captions: bool = False,
     remove_timestamps: bool = True
 ) -> tuple[Optional[dict], Optional[str]]:
-    """
-    Process YouTube URL and return transcription result
-    Returns: (result_dict, error_message)
-    """
+    """Process Video URL (YouTube, TikTok, etc.)"""
     try:
         temp_dir = Path(tempfile.mkdtemp())
-
         try:
             lang = language if language else "ar"
-
-            if source == "captions":
+            
+            # For non-YouTube URLs or when "audio" source is selected, use audio pipeline
+            # 'captions' mode is mainly for YouTube where we can grab subs directly.
+            # If default is 'captions' but it's not YouTube, we might fallback or fail.
+            # For now, let's trust the user choice or fallback.
+            
+            is_youtube = "youtube.com" in url or "youtu.be" in url
+            
+            if source == "captions" and is_youtube:
+                # YouTube Captions Path
                 cleaned_text, segments, used_auto, raw_text = download_captions_text(url, lang, temp_dir)
                 clean_text = strip_captions_timestamps(raw_text)
-                clean_text = normalize_whitespace(clean_text)
-                line_text = strip_captions_timestamps_keep_lines(raw_text)
-                text = clean_text
-
-                if postprocess_enabled and postprocess_mode == "formatted":
-                    processed_text = format_arabic_text(text, language=lang)
-                else:
-                    processed_text = text
-
-                if output_format in ["srt", "vtt"] and not segments:
-                    return None, "❌ لا توجد timestamps/segments. استخدم صيغة 'نص' أو 'JSON' بدلاً من SRT/VTT."
-
-                # Build output for display
+                
+                processed_text = format_arabic_text(clean_text, language=lang) if postprocess_enabled and postprocess_mode == "formatted" else clean_text
+                
+                display_text = format_output(processed_text, segments, output_format)
                 if output_format == "text":
-                    if raw_captions:
-                        display_text = raw_text
-                    else:
-                        display_text = clean_text if remove_timestamps else line_text
-                elif output_format == "json":
-                    import json
-                    payload = {
-                        "language": lang,
-                        "text": clean_text,
-                        "segments": segments,
-                        "source": "captions",
-                        "cleaned": bool(remove_timestamps)
-                    }
-                    if raw_captions:
-                        payload["raw_text"] = raw_text
-                    display_text = json.dumps(payload, ensure_ascii=False, indent=2)
-                elif output_format == "srt":
-                    output_lines = []
-                    seg_count = 0
-                    for seg in segments:
-                        start = seg.get("start")
-                        end = seg.get("end")
-                        if start is None or end is None:
-                            continue
-                        seg_count += 1
-                        start_time = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d},{int((start % 1) * 1000):03d}"
-                        end_time = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d},{int((end % 1) * 1000):03d}"
-                        output_lines.extend([
-                            str(seg_count),
-                            f"{start_time} --> {end_time}",
-                            seg.get("text", ""),
-                            ""
-                        ])
-                    display_text = "\n".join(output_lines)
-                else:  # vtt
-                    output_lines = ["WEBVTT", ""]
-                    for seg in segments:
-                        start = seg.get("start")
-                        end = seg.get("end")
-                        if start is None or end is None:
-                            continue
-                        start_time = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d}.{int((start % 1) * 1000):03d}"
-                        end_time = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d}.{int((end % 1) * 1000):03d}"
-                        output_lines.extend([
-                            f"{start_time} --> {end_time}",
-                            seg.get("text", ""),
-                            ""
-                        ])
-                    display_text = "\n".join(output_lines)
-
-                duration_seconds = None
-                if segments:
-                    duration_seconds = max(seg.get("end", 0) for seg in segments)
+                    display_text = raw_text if raw_captions else (clean_text if remove_timestamps else raw_text)
 
                 import json
-                download_payload = {
-                    "text": clean_text,
-                    "model": "youtube-captions",
-                    "lang": lang,
-                    "duration_seconds": duration_seconds,
-                    "chunks_count": 0,
-                    "source": "captions",
-                    "cleaned": bool(remove_timestamps)
-                }
-                if raw_captions:
-                    download_payload["raw_captions"] = raw_text
-
-                download_json = json.dumps(download_payload, ensure_ascii=False, indent=2)
-
-                warning = "⚠️ تم استخدام الترجمة التلقائية (دقة أقل)." if used_auto else None
+                download_json = json.dumps({"text": processed_text, "source": "captions"}, ensure_ascii=False, indent=2)
 
                 return {
                     "display_text": display_text,
-                    "text": clean_text,
-                    "text_download": clean_text if remove_timestamps else line_text,
+                    "text": processed_text,
                     "json_download": download_json,
                     "output_format": output_format,
-                    "warning": warning,
-                    "source": "captions",
-                    "raw_text": raw_text,
-                    "clean_text": clean_text,
-                    "cleaned": bool(remove_timestamps)
+                    "source": "captions"
                 }, None
 
-            # Audio path: download audio and use pipeline
-            logger.info(f"Starting YouTube audio download for: {url}")
-            audio_path = download_audio(url, temp_dir)
-            logger.info(f"Audio downloaded successfully: {audio_path}")
-
-            settings = load_settings()
-            config = TranscribeConfig(
-                input_path=audio_path,
-                output_dir=temp_dir,
-                language=lang,
-                model=settings.openai_model,
-                output_format=output_format,
-                diarize=False,
-                max_bytes_per_chunk=max_chunk_size_mb * 1024 * 1024
-            )
-
-            result = asyncio.run(transcribe_file(config))
-            # Ensure chunking succeeded
-            chunks_count = extract_metadata(result, "chunks_count", extract_metadata(result, "chunks"))
-            if chunks_count is None:
-                raise ValueError("chunking failed; check ffmpeg extraction")
-
-            segments = extract_segments(result)
-            if segments is None:
-                if output_format in ["srt", "vtt"]:
-                    return None, "❌ لا توجد timestamps/segments. استخدم صيغة 'نص' أو 'JSON' بدلاً من SRT/VTT."
-                segments = []
-            raw_text = extract_text(result)
-
-            if postprocess_enabled and postprocess_mode == "formatted":
-                processed_text = format_arabic_text(raw_text, language=lang)
             else:
-                processed_text = raw_text
+                # Audio Download Path (Generic for all platforms)
+                logger.info(f"Downloading audio from URL: {url}")
+                audio_path = download_audio(url, temp_dir)
+                
+                settings = load_settings()
+                config = TranscribeConfig(
+                    input_path=audio_path,
+                    output_dir=temp_dir,
+                    language=lang,
+                    model=settings.openai_model,
+                    output_format=output_format,
+                    diarize=False,
+                    max_bytes_per_chunk=max_chunk_size_mb * 1024 * 1024
+                )
 
-            if output_format in ["srt", "vtt"] and not segments:
-                return None, "❌ لا توجد timestamps/segments. استخدم صيغة 'نص' أو 'JSON' بدلاً من SRT/VTT."
-
-            # Reuse formatting logic from file path
-            if output_format == "text":
-                display_text = processed_text
-            elif output_format == "json":
+                result = asyncio.run(transcribe_file(config))
+                chunks = extract_metadata(result, "chunks_count")
+                if chunks is None: raise ValueError("processing failed")
+                
+                raw_text = extract_text(result)
+                segments = extract_segments(result) or []
+                
+                processed_text = format_arabic_text(raw_text, language=lang) if postprocess_enabled and postprocess_mode == "formatted" else raw_text
+                display_text = format_output(processed_text, segments, output_format)
+                
                 import json
-                display_text = json.dumps({
-                    "language": extract_metadata(result, "language"),
-                    "duration": extract_metadata(result, "duration"),
+                download_json = json.dumps({"text": processed_text, "segments": segments}, ensure_ascii=False, indent=2)
+
+                return {
+                    "display_text": display_text,
                     "text": processed_text,
-                    "segments": segments
-                }, ensure_ascii=False, indent=2)
-            elif output_format == "srt":
-                output_lines = []
-                seg_count = 0
-                for seg in segments:
-                    start = seg.get("start") if isinstance(seg, dict) else getattr(seg, "start", None)
-                    end = seg.get("end") if isinstance(seg, dict) else getattr(seg, "end", None)
-                    text = seg.get("text", "") if isinstance(seg, dict) else getattr(seg, "text", "")
-                    if start is None or end is None:
-                        continue
-                    seg_count += 1
-                    start_time = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d},{int((start % 1) * 1000):03d}"
-                    end_time = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d},{int((end % 1) * 1000):03d}"
-                    output_lines.extend([
-                        str(seg_count),
-                        f"{start_time} --> {end_time}",
-                        text,
-                        ""
-                    ])
-                display_text = "\n".join(output_lines)
-            else:  # vtt
-                output_lines = ["WEBVTT", ""]
-                for seg in segments:
-                    start = seg.get("start") if isinstance(seg, dict) else getattr(seg, "start", None)
-                    end = seg.get("end") if isinstance(seg, dict) else getattr(seg, "end", None)
-                    text = seg.get("text", "") if isinstance(seg, dict) else getattr(seg, "text", "")
-                    if start is None or end is None:
-                        continue
-                    start_time = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d}.{int((start % 1) * 1000):03d}"
-                    end_time = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d}.{int((end % 1) * 1000):03d}"
-                    output_lines.extend([
-                        f"{start_time} --> {end_time}",
-                        text,
-                        ""
-                    ])
-                display_text = "\n".join(output_lines)
-
-            import json
-            download_json = json.dumps({
-                "text": processed_text,
-                "model": extract_metadata(result, "model"),
-                "lang": extract_metadata(result, "language"),
-                "duration_seconds": extract_metadata(result, "duration_seconds", extract_metadata(result, "duration")),
-                "chunks_count": extract_metadata(result, "chunks_count", extract_metadata(result, "chunks", 0))
-            }, ensure_ascii=False, indent=2)
-
-            return {
-                "display_text": display_text,
-                "text": processed_text,
-                "text_download": processed_text,
-                "json_download": download_json,
-                "output_format": output_format
-            }, None
+                    "segments": segments,
+                    "json_download": download_json,
+                    "output_format": output_format
+                }, None
 
         finally:
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            if temp_dir.exists(): shutil.rmtree(temp_dir, ignore_errors=True)
 
-    except FileNotFoundError as e:
-        error_msg = str(e)
-        if "yt-dlp failed" in error_msg:
-            return None, f"❌ فشل yt-dlp في التنزيل:\n{error_msg}"
-        elif "ffmpeg conversion failed" in error_msg:
-            return None, f"❌ فشل تحويل ffmpeg:\n{error_msg}"
-        elif "Audio download failed" in error_msg or "not found" in error_msg:
-            return None, f"❌ فشل تنزيل الصوت:\n{error_msg}"
-        else:
-            return None, f"❌ خطأ: {error_msg}"
     except Exception as e:
-        return None, f"خطأ في المعالجة: {str(e)}"
+        return None, f"خطأ: {str(e)}"
+
+
+def ai_features_ui():
+    """Render AI Features Section"""
+    if 'transcription_result' not in st.session_state: return
+
+    st.markdown("---")
+    st.markdown("### 🤖 معالجة بالذكاء الاصطناعي | AI Processing")
+    
+    result = st.session_state['transcription_result']
+    text = result.get("text", "")
+    
+    if not text:
+        st.warning("لا يوجد نص للمعالجة")
+        return
+
+    with st.expander("✨ أدوات الذكاء الاصطناعي (تلخيص، صياغة، تحويل)", expanded=True):
+        tab_sum, tab_points, tab_speech, tab_rewrite = st.tabs([
+            "📝 تلخيص", "📌 نقاط رئيسية", "🗣️ تحويل لخطاب", "✍️ إعادة صياغة"
+        ])
+        
+        # Summary
+        with tab_sum:
+            length = st.select_slider("الطول", options=["short", "medium", "detailed"], format_func=lambda x: {"short":"قصير", "medium":"متوسط", "detailed":"مفصل"}[x])
+            if st.button("لخص النص"):
+                with st.spinner("جارٍ التلخيص..."):
+                    try:
+                        summary = asyncio.run(generate_summary(text, length))
+                        st.text_area("الملخص", value=summary, height=200)
+                    except Exception as e:
+                        st.error(f"فشل التلخيص: {e}")
+
+        # Key Points
+        with tab_points:
+            if st.button("استخرج النقاط"):
+                with st.spinner("جارٍ التحليل..."):
+                    try:
+                        points = asyncio.run(extract_key_points(text))
+                        st.text_area("النقاط الرئيسية", value=points, height=300)
+                    except Exception as e:
+                        st.error(f"فشل الاستخراج: {e}")
+
+        # Speech
+        with tab_speech:
+            audience = st.text_input("الجمهور المستهدف", value="فريق العمل")
+            if st.button("حول لخطاب"):
+                with st.spinner("جارٍ التحويل..."):
+                    try:
+                        speech = asyncio.run(convert_to_speech(text, audience))
+                        st.text_area("الخطاب المقترح", value=speech, height=400)
+                    except Exception as e:
+                        st.error(f"فشل التحويل: {e}")
+
+        # Rewrite
+        with tab_rewrite:
+            col_style, col_struct = st.columns(2)
+            style = col_style.selectbox("الأسلوب", ["رسمي", "بسيط", "أكاديمي", "صحفي", "تسويقي", "محادثة"])
+            structure = col_struct.selectbox("الهيكل", ["فقرات منظمة", "نقاط مرقمة", "سؤال وجواب", "قصة", "ملخص تنفيذي"])
+            options = st.multiselect("خيارات إضافية", ["تحسين القواعد", "إزالة التكرار", "تحسين الوضوح"])
+            
+            if st.button("أعد الصياغة"):
+                with st.spinner("جارٍ إعادة الصياغة..."):
+                    try:
+                        rewritten = asyncio.run(rewrite_text(text, style, structure, options))
+                        st.text_area("النص الجديد", value=rewritten, height=400)
+                    except Exception as e:
+                        st.error(f"فشل إعادة الصياغة: {e}")
 
 
 def main():
-    """Main Streamlit app"""
+    """Main App"""
     configure_page()
-    
-    # Header
-    st.markdown('<h1 class="main-header">🎙️ تفريغ الصوت والفيديو | Audio Transcription</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🎙️ Transcribe CLI 2.0</h1>', unsafe_allow_html=True)
     st.markdown("---")
     
-    # Validate settings
-    if not validate_settings():
-        st.stop()
-    
-    # Sidebar configuration
-    with st.sidebar:
-        st.header("⚙️ الإعدادات | Settings")
-        
-        # Language selection
-        language_display = st.selectbox(
-            "🌐 اللغة | Language",
-            options=list(LANGUAGES.keys()),
-            index=0,
-            help="اختر لغة الصوت، أو اترك 'تلقائي' للكشف التلقائي"
-        )
-        language_code = LANGUAGES[language_display]
-        
-        # Output format
-        format_display = st.selectbox(
-            "📄 صيغة الخرج | Output Format",
-            options=list(OUTPUT_FORMATS.keys()),
-            index=0,
-            help="اختر صيغة النص الناتج. ملاحظة: SRT/VTT يتطلبان timestamps من API"
-        )
-        output_format = OUTPUT_FORMATS[format_display]
+    if not validate_settings(): st.stop()
 
-        # Post-processing
-        postprocess_enabled = st.checkbox(
-            "🧹 تفعيل معالجة النص | Enable Post-processing",
-            value=False,
-            help="تفعيل تحسين النص العربي بشكل اختياري"
-        )
-        postprocess_mode_label = st.selectbox(
-            "📝 نمط المعالجة | Mode",
-            options=["Literal", "Formatted"],
-            index=0,
-            disabled=not postprocess_enabled,
-            help="Literal = النص كما هو. Formatted = تنسيق خفيف (مسافات + إزالة تكرار + علامات بسيطة)"
-        )
-        postprocess_mode = "formatted" if postprocess_mode_label == "Formatted" else "literal"
+    # Sidebar
+    with st.sidebar:
+        st.header("⚙️ الإعدادات")
+        lang_key = st.selectbox("🌐 اللغة", list(LANGUAGES.keys()))
+        lang_code = LANGUAGES[lang_key]
         
-        # Show warning for SRT/VTT
-        if output_format in ["srt", "vtt"]:
-            st.info("ℹ️ صيغ SRT/VTT تتطلب timestamps من API. إذا لم تتوفر، سيتم عرض النص العادي.")
+        fmt_key = st.selectbox("📄 صيغة العرض", list(OUTPUT_FORMATS.keys()))
+        out_fmt = OUTPUT_FORMATS[fmt_key]
         
-        # Diarization
-        enable_diarization = st.checkbox(
-            "👥 تمييز المتحدثين | Speaker Diarization",
-            value=False,
-            help="محاولة تمييز المتحدثين المختلفين (تجريبي)"
-        )
+        diarize = st.checkbox("👥 تمييز المتحدثين")
         
-        # Advanced settings
-        with st.expander("⚙️ إعدادات متقدمة | Advanced"):
-            max_chunk_size = st.slider(
-                "حجم القطعة الأقصى (MB) | Max Chunk Size",
-                min_value=5,
-                max_value=24,
-                value=20,
-                help="حجم القطع للملفات الكبيرة (الحد الأقصى لـ OpenAI: 25MB)"
-            )
-        
-        st.markdown("---")
-        st.markdown("**ℹ️ ملاحظات:**")
-        st.markdown("""
-        - **لا يوجد حد لحجم الملف** - التقسيم التلقائي مدعوم
-        - كل جزء يُرسل للـ API: **< 25 MB** (حد OpenAI)
-        - الصيغ المدعومة: MP3, MP4, WAV, M4A, WebM
-        - SRT/VTT يتطلبان علامات زمنية من API
-        """)
-    
-    # Main content
-    st.markdown('<div class="app-container">', unsafe_allow_html=True)
+        with st.expander("خيارات متقدمة"):
+            enable_post = st.checkbox("تفعيل المعالجة", True)
+            mode = "formatted" if enable_post else "literal"
+            chunk_size = st.slider("Max Chunk (MB)", 5, 24, 20)
+
+    # Main UI
     col1, col2 = st.columns([1, 1], gap="large")
     
     with col1:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("📁 رفع الملف | Upload File")
-
-        tab_upload, tab_youtube = st.tabs(["📁 ملف", "▶️ YouTube"])
-
-        with tab_upload:
-            uploaded_file = st.file_uploader(
-                "اختر ملف صوتي أو فيديو",
-                type=ALL_FORMATS,
-                help=f"الصيغ المدعومة: {', '.join(ALL_FORMATS)} | لا يوجد حد لحجم الملف - الملفات الكبيرة يتم تقسيمها تلقائياً"
-            )
-
-            if uploaded_file:
-                # Display file info
-                file_size_mb = uploaded_file.size / (1024 * 1024)
-                st.info(f"""
-                    **معلومات الملف:**
-                    - الاسم: `{uploaded_file.name}`
-                    - الحجم: `{file_size_mb:.2f} MB`
-                    - النوع: `{uploaded_file.type}`
-                """)
-
-                # Check file size and show helpful info
-                if file_size_mb > 100:
-                    st.warning("⚠️ ملف كبير جداً! سيتم تقسيمه تلقائياً إلى أجزاء صغيرة للمعالجة. قد يستغرق بعض الوقت...")
-                elif file_size_mb > 25:
-                    st.info("ℹ️ سيتم تقسيم الملف تلقائياً إلى أجزاء < 25MB للتوافق مع OpenAI API")
-
-                # Process button
-                if st.button("🚀 ابدأ التفريغ | Start Transcription", type="primary", use_container_width=True):
-                    with st.spinner("⏳ جارٍ المعالجة... | Processing..."):
-                        try:
-                            result, error = process_file(
-                                uploaded_file,
-                                language_code,
-                                output_format,
-                                enable_diarization,
-                                max_chunk_size,
-                                postprocess_enabled,
-                                postprocess_mode
-                            )
-
-                            if error:
-                                st.error(f"❌ {error}")
-                            else:
-                                if result.get("warning"):
-                                    st.warning(result.get("warning"))
-                                st.session_state['transcription_result'] = result
-                                st.session_state['output_format'] = output_format
-                                st.success("✅ تم التفريغ بنجاح! | Transcription completed!")
-                        except Exception:
-                            logger.exception("Upload transcription failed")
-                            traceback.print_exc()
-                            st.error("❌ حدث خطأ غير متوقع. راجع سجل التشغيل في الطرفية.")
-
-        with tab_youtube:
-            st.markdown("**تفريغ روابط YouTube**")
-            youtube_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
-            source_option = st.selectbox(
-                "المصدر | Source",
-                options=["captions", "audio"],
-                index=0,
-                help="captions أسرع إذا كانت الترجمة متوفرة. audio أبطأ لكنه يعمل مع أي فيديو."
-            )
-
-            remove_timestamps = True
-            raw_captions = False
-            if source_option == "captions":
-                remove_timestamps = st.checkbox(
-                    "إزالة التوقيت والوسوم",
-                    value=True,
-                    help="تنظيف النص بإزالة timestamps ووسوم VTT افتراضيًا"
-                )
-                raw_captions = st.checkbox(
-                    "Raw captions",
-                    value=False,
-                    help="عرض/تنزيل النص الخام من VTT بدون تنظيف. الافتراضي: نص نظيف"
-                )
-
-                if st.button("مسح التوقيت الآن", use_container_width=True):
-                    if "transcription_result" in st.session_state:
-                        current = st.session_state["transcription_result"]
-                        if current.get("source") == "captions" and current.get("raw_text"):
-                            raw_text = current.get("raw_text", "")
-                            clean_text = strip_captions_timestamps(raw_text)
-                            clean_text = normalize_whitespace(clean_text)
-                            line_text = strip_captions_timestamps_keep_lines(raw_text)
-
-                            display_text = raw_text if raw_captions else (clean_text if remove_timestamps else line_text)
-                            current["display_text"] = display_text
-                            current["text"] = clean_text
-                            current["text_download"] = clean_text if remove_timestamps else line_text
-                            current["clean_text"] = clean_text
-                            current["cleaned"] = bool(remove_timestamps)
-                            st.session_state["transcription_result"] = current
-
-            if st.button("🚀 ابدأ التفريغ من YouTube", type="primary", use_container_width=True):
-                if not youtube_url.strip():
-                    st.error("❌ الرجاء إدخال رابط YouTube صحيح")
-                else:
-                    with st.spinner("⏳ جارٍ المعالجة... | Processing..."):
-                        try:
-                            result, error = process_youtube(
-                                youtube_url.strip(),
-                                language_code,
-                                output_format,
-                                source_option,
-                                max_chunk_size,
-                                postprocess_enabled,
-                                postprocess_mode,
-                                raw_captions,
-                                remove_timestamps
-                            )
-
-                            if error:
-                                st.error(f"❌ {error}")
-                            else:
-                                if result.get("warning"):
-                                    st.warning(result.get("warning"))
-                                st.session_state['transcription_result'] = result
-                                st.session_state['output_format'] = output_format
-                                st.success("✅ تم التفريغ بنجاح! | Transcription completed!")
-                        except Exception:
-                            logger.exception("YouTube transcription failed")
-                            traceback.print_exc()
-                            st.error("❌ حدث خطأ غير متوقع. راجع سجل التشغيل في الطرفية.")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown('<div class="card result-card">', unsafe_allow_html=True)
-        st.subheader("📝 النتيجة | Result")
+        st.markdown('<div class="card"><h3>📥 الإدخال | Input</h3>', unsafe_allow_html=True)
+        tab_file, tab_url = st.tabs(["📁 رفع ملف", "🔗 رابط فيديو"])
         
-        if 'transcription_result' in st.session_state:
-            result = st.session_state['transcription_result']
-            output_fmt = st.session_state.get('output_format', 'text')
+        # File Upload
+        with tab_file:
+            uploaded = st.file_uploader("اختر ملفاً", type=ALL_FORMATS)
+            if uploaded and st.button("🚀 ابدأ (ملف)", key="btn_file", type="primary", use_container_width=True):
+                with st.spinner("جارٍ المعالجة..."):
+                    res, err = process_file(uploaded, lang_code, out_fmt, diarize, chunk_size, enable_post, mode)
+                    if res:
+                        st.session_state['transcription_result'] = res
+                        st.success("تم بنجاح!")
+                    else:
+                        st.error(err)
 
-            display_text = result.get("display_text", "")
-            text_download = result.get("text_download", "")
-            json_download = result.get("json_download", "")
+        # URL Input
+        with tab_url:
+            st.markdown("يدعم: YouTube, TikTok, Instagram, Twitter/X")
+            url = st.text_input("رابط الفيديو")
+            source = st.selectbox("المصدر", ["audio", "captions"], help="Captions (YouTube Only) اسرع")
             
-            # Display result
-            st.text_area(
-                "النص المفرغ | Transcribed Text",
-                value=display_text,
-                height=420,
-                key="result_display"
-            )
-
-            st.markdown('<div class="toolbar">', unsafe_allow_html=True)
-            col_main, col_txt, col_json, col_copy = st.columns(4)
-
-            # Main download for selected format
-            file_extension = output_fmt if output_fmt in ['srt', 'vtt', 'json'] else 'txt'
-            with col_main:
-                st.download_button(
-                    label=f"⬇️ تحميل | Download {file_extension.upper()}",
-                    data=display_text,
-                    file_name=f"transcription.{file_extension}",
-                    mime="text/plain",
-                    use_container_width=True
-                )
-
-            with col_txt:
-                st.download_button(
-                    label="⬇️ Download TXT",
-                    data=text_download,
-                    file_name="transcription.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
-
-            with col_json:
-                st.download_button(
-                    label="⬇️ Download JSON",
-                    data=json_download,
-                    file_name="transcription.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-
-            with col_copy:
-                import json
-                copy_payload = json.dumps(display_text)
-                components.html(
-                    f"""
-                    <div style="display:flex;justify-content:center;align-items:center;height:100%;">
-                        <button id="copy-btn" style="width:100%;padding:0.6rem 1rem;border-radius:8px;border:1px solid #d1d5db;background:#111827;color:#fff;cursor:pointer;">
-                            📋 نسخ النص
-                        </button>
-                    </div>
-                    <script>
-                    (function() {{
-                        const btn = document.getElementById('copy-btn');
-                        const text = {copy_payload};
-                        if (!btn) return;
-                        btn.addEventListener('click', async () => {{
-                            try {{
-                                if (navigator?.clipboard?.writeText) {{
-                                    await navigator.clipboard.writeText(text);
-                                }} else {{
-                                    const ta = document.createElement('textarea');
-                                    ta.value = text;
-                                    document.body.appendChild(ta);
-                                    ta.select();
-                                    document.execCommand('copy');
-                                    document.body.removeChild(ta);
-                                }}
-                                const original = btn.textContent;
-                                btn.textContent = '✅ تم النسخ';
-                                setTimeout(() => (btn.textContent = original), 1500);
-                            }} catch (e) {{
-                                btn.textContent = '⚠️ فشل النسخ';
-                            }}
-                        }});
-                    }})();
-                    </script>
-                    """,
-                    height=48
-                )
-                st.info("إذا لم ينجح النسخ التلقائي، انسخ يدويًا من المربع التالي:")
-                st.text_area("نسخ يدوي", value=display_text, height=120, key="copy_fallback")
-
-            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.info("👆 ارفع ملفاً واضغط 'ابدأ التفريغ' لعرض النتائج")
+            if st.button("🚀 ابدأ (رابط)", key="btn_url", type="primary", use_container_width=True):
+                if not url: st.error("الرابط مطلوب")
+                else:
+                    with st.spinner("جارٍ التحميل والمعالجة..."):
+                        res, err = process_url(url, lang_code, out_fmt, source, chunk_size, enable_post, mode)
+                        if res:
+                            st.session_state['transcription_result'] = res
+                            st.success("تم بنجاح!")
+                        else:
+                            st.error(err)
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    # Footer
-    st.markdown("---")
-    st.markdown(
-        '<div style="text-align: center; color: gray;">Powered by OpenAI Whisper | Made with ❤️ using Streamlit</div>',
-        unsafe_allow_html=True
-    )
 
+    with col2:
+        st.markdown('<div class="card"><h3>📝 النتيجة | Result</h3>', unsafe_allow_html=True)
+        if 'transcription_result' in st.session_state:
+            res = st.session_state['transcription_result']
+            final_text = res.get("display_text", "")
+            raw_text = res.get("text", "")
+            
+            # Editable Text Area
+            edited_text = st.text_area("النص المفرغ", value=final_text, height=450)
+            
+            # Export Toolbar
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.download_button("⬇️ TXT", final_text, "transcription.txt", use_container_width=True)
+            with c2:
+                st.download_button("⬇️ JSON", res.get("json_download", "{}"), "data.json", "application/json", use_container_width=True)
+            with c3:
+                try:
+                    docx_file = export_to_docx(edited_text)
+                    st.download_button("⬇️ DOCX", docx_file, "transcription.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                except Exception as e:
+                    st.error("DOCX Error")
+            with c4:
+                try:
+                    pdf_file = export_to_pdf(edited_text)
+                    st.download_button("⬇️ PDF", pdf_file, "transcription.pdf", "application/pdf", use_container_width=True)
+                except Exception as e:
+                    st.error("PDF Error")
+            
+            # Copy Button
+            import json
+            js_text = json.dumps(edited_text)
+            components.html(f"""
+                <button onclick="navigator.clipboard.writeText({js_text}).then(()=>this.innerText='✅').catch(()=>this.innerText='❌')"
+                style="width:100%;padding:8px;border:1px solid #444;border-radius:4px;background:#222;color:white;cursor:pointer;">
+                📋 نسخ للحافظة
+                </button>
+            """, height=40)
 
-def run():
-    """Entry point for console script"""
-    import sys
-    import subprocess
-    from pathlib import Path
-    
-    # Get the path to this file
-    app_file = Path(__file__).resolve()
-    
-    # Run streamlit on this file
-    subprocess.run([sys.executable, "-m", "streamlit", "run", str(app_file)] + sys.argv[1:])
+        else:
+            st.info("النتائج ستظهر هنا...")
+        st.markdown('</div>', unsafe_allow_html=True)
 
+    # AI Features Section
+    ai_features_ui()
 
 if __name__ == "__main__":
     main()
